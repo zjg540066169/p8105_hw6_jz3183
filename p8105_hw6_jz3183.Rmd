@@ -352,3 +352,180 @@ cv_df %>%
 From the violin plot, we can find the model using length at birth and gestational age as predictors (main effects only) has the highest rmse, which means it doesn`t fit well for test set. And the model using head circumference, length, sex, and all interactions has the second highest rmse which is totally lower than that in model main effects only. Finally, our model Lasso has the lowest rmse, which means it fitted the test set better than other 2 models.
 
 
+## Problem 2
+
+First we read the data as the follows:
+
+```{r p2_read_data, collapse = TRUE, message = FALSE}
+# in this code chunk, we read the data with code
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+# display 
+weather_df
+```
+
+Then, we use bootstrap sampling for 5000 times and run regression.
+
+```{r p2_bootstrap, collapse = TRUE}
+# in this code chunk, we use bootstrap to sample
+bootstrap_samples = 
+  weather_df %>% 
+  modelr::bootstrap(n = 5000) %>% 
+  mutate(
+    models = map(strap, ~ lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::tidy),
+    variables = map(models, broom::glance)
+    ) %>% 
+  select(-strap, -models) %>% 
+  unnest(results, variables)
+
+# display
+bootstrap_samples
+```
+
+After we have used bootstrap to resample and do the regression, we will then do some inference on $\hat{r}^2$. First, we plot the distribution of it.
+
+```{r p2_r2_plot, collapse = TRUE, message = FALSE}
+# in this code chunk, we use the bootstrap samples to make plot on r2
+
+# make plot and display
+bootstrap_samples %>% 
+  filter(term == "tmin") %>% 
+  ggplot(aes(x = r.squared)) + 
+  geom_histogram(aes(y = stat(count / sum(count))), stat = "density", fill = "lightblue") +
+  labs(
+    title = "Distribution Plot of the Estimate of R square",
+    x = "Estimate of R square",
+    y = "Density",
+    caption = "Data: 2017 Central Park weather data ") +
+  geom_vline(aes(xintercept = mean(r.squared))) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the distribution plot of R square, we may find it is close to a normal distribution, and the black line is the mean. Then, we will use the sample quantiles to estimate the 95% confidence interval: 
+
+```{r p2_r2_ci, collapse = TRUE}
+# calculate the 95% CI of r sqaure
+CI_r2 = 
+  bootstrap_samples %>% 
+  filter(term == "tmin") %>% 
+  pull(r.squared) %>% 
+  quantile(., c(0.025, 0.975))
+
+# display
+CI_r2
+```
+
+So the 95% CI of R square is [`r CI_r2[[1]]`, `r CI_r2[[2]]`] by bootstrap. Then, we also plot the 95% confidence interval on the distribution plot with the red line:
+
+```{r p2_r2_plot_ci, collapse = TRUE, message = FALSE}
+# in this code chunk, we use the bootstrap samples to make plot on r2 with 95% CI
+
+# data transformation
+bootstrap_samples %>% 
+  filter(term == "tmin") %>% 
+  # make plot
+  ggplot(aes(x = r.squared)) + 
+  geom_histogram(aes(y = stat(count / sum(count))), stat = "density", fill = "lightblue") +
+  labs(
+    title = "Distribution Plot of the Estimate of R square",
+    x = "Estimate of R square",
+    y = "Density",
+    caption = "Data: 2017 Central Park weather data ") +
+  geom_vline(aes(xintercept = mean(r.squared))) +
+  geom_vline(aes(xintercept = CI_r2[[1]]), color = "red") +
+  geom_vline(aes(xintercept = CI_r2[[2]]), color = "red") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the graph above, we may draw the conclusion that the estimated r square is close to the normal distribution.
+
+After inference on the estimated r square, we want to do inference on $log(\hat{\beta_0} * \hat{\beta_1})$. First, we plot the distribution plot of it:
+
+```{r p2_beta_plot, collapse = TRUE, message = FALSE}
+# in this code chunk, we use the bootstrap samples to make plot on log(beta0_hat * beta1_hat).
+
+# data transformation
+bootstrap_samples %>% 
+  select(.id, term, estimate) %>% 
+  pivot_wider(
+    id_cols = .id,
+    names_from = term,
+    values_from = estimate
+  ) %>% 
+  janitor::clean_names() %>% 
+  mutate(log_estimate = log(intercept * tmin)) %>% 
+  # make plot
+  ggplot(aes(x = log_estimate)) + 
+  geom_histogram(aes(y = stat(count / sum(count))), stat = "density", fill = "lightblue") +
+  labs(
+    title = "Distribution Plot of the Estimate of log(beta0_hat * beta1_hat)",
+    x = "Estimate of log(beta0_hat * beta1_hat)",
+    y = "Density",
+    caption = "Data: 2017 Central Park weather data ") +
+  geom_vline(aes(xintercept = mean(log_estimate))) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the distribution plot of log(beta0_hat * beta1_hat), we may find it is also close to a normal distribution, and the black line is the mean. However, comparing with R square, it has a heavy tail which means the data are more dispersed. Then, we will use the sample quantiles to estimate the 95% confidence interval: 
+
+```{r p2_beta_ci, collapse = TRUE}
+# calculate the 95% CI of log(beta0_hat * beta1_hat)
+beta_ci = 
+  bootstrap_samples %>% 
+  select(.id, term, estimate) %>% 
+  pivot_wider(
+    id_cols = .id,
+    names_from = term,
+    values_from = estimate
+  ) %>% 
+  janitor::clean_names() %>% 
+  mutate(log_estimate = log(intercept * tmin)) %>% 
+  pull(log_estimate) %>% 
+  quantile(., c(0.025, 0.975))
+
+# display
+beta_ci
+```
+
+So the 95% confidence interval of log(beta0_hat * beta1_hat) is [`r beta_ci[[1]]`, `r beta_ci[[2]]`] by bootstrap. Then, we also plot the 95% confidence interval on the distribution plot with the red line:
+
+```{r p2_beta_plot_ci, collapse = TRUE, message = FALSE}
+# in this code chunk, we use the bootstrap samples to make plot on log(beta0_hat * beta1_hat) with 95% CI
+
+# data transformation
+bootstrap_samples %>% 
+  select(.id, term, estimate) %>% 
+  pivot_wider(
+    id_cols = .id,
+    names_from = term,
+    values_from = estimate
+  ) %>% 
+  janitor::clean_names() %>% 
+  mutate(log_estimate = log(intercept * tmin)) %>% 
+  #make plot
+  ggplot(aes(x = log_estimate)) + 
+  geom_histogram(aes(y = stat(count / sum(count))), stat = "density", fill = "lightblue") +
+  labs(
+    title = "Distribution Plot of the Estimate of log(beta0_hat * beta1_hat)",
+    x = "Estimate of log(beta0_hat * beta1_hat)",
+    y = "Density",
+    caption = "Data: 2017 Central Park weather data ") +
+  
+  geom_vline(aes(xintercept = mean(log_estimate))) +
+  geom_vline(aes(xintercept = beta_ci[[1]]), color = "red") +
+  geom_vline(aes(xintercept = beta_ci[[2]]), color = "red") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+From the graph above, we may draw the conclusion that the estimated log(beta0_hat * beta1_hat) is close to the normal distribution. Comparing with estimated r square, it has a heavier tail.
